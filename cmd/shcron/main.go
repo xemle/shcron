@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/xemle/shcron/internal/app" // Import the new 'app' package
+	"github.com/xemle/shcron/internal/app"
 )
 
 var (
@@ -14,12 +14,16 @@ var (
 	untilDateStr  string
 	count         int
 	exitCodeMode  string
+	maxConcurrent int // NEW: Flag for maximum concurrent executions
 )
+
+// version will be set by the Go linker during build for releases
+var version string = "dev"
 
 func main() {
 	// Define flags
 	flag.BoolVar(&exitOnFailure, "exit-on-failure", false, "Exit immediately if the command returns a non-zero exit code.")
-	flag.BoolVar(&exitOnFailure, "e", false, "Exit immediately if the command returns a non-zero exit code (shorthand).") // Shorthand
+	flag.BoolVar(&exitOnFailure, "e", false, "Exit immediately if the command returns a non-zero exit code (shorthand).")
 
 	flag.StringVar(&outputDir, "output-dir", "", "Directory to dump command output (one file per run).")
 	flag.StringVar(&outputDir, "o", "", "Directory to dump command output (one file per run) (shorthand).")
@@ -33,10 +37,16 @@ func main() {
 	flag.StringVar(&exitCodeMode, "exit-code", "default", "Defines shcron's exit code on termination. Options: first-run, last-run, first-error, last-error, default.")
 	flag.StringVar(&exitCodeMode, "x", "default", "Defines shcron's exit code on termination (shorthand).")
 
+	flag.IntVar(&maxConcurrent, "max-concurrent", 1, "Maximum number of concurrent command executions. 1 for sequential.")
+	flag.IntVar(&maxConcurrent, "j", 1, "Maximum number of concurrent command executions (shorthand).")
+
+	// Special flag for version
+	versionFlag := flag.Bool("version", false, "Print shcron version and exit.")
+
 	// Set custom usage message
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), `shcron: A flexible command-line tool for periodic execution, similar to cron but for temporary tasks.
-It supports both simple interval patterns and full cron expressions for precise scheduling without sleep drift.
+It supports both simple interval patterns and full cron expressions for precise scheduling, and can run tasks in parallel.
 
 Usage: %s [options] "<pattern>" <command> [args...]
 
@@ -64,11 +74,21 @@ Options:
 
 	flag.Parse() // Parse the flags
 
+	if *versionFlag {
+		fmt.Printf("shcron version %s\n", version)
+		os.Exit(0)
+	}
+
 	// Positional arguments start after flags
 	args := flag.Args()
 
 	if len(args) < 2 {
 		flag.Usage()
+		os.Exit(1)
+	}
+
+	if maxConcurrent < 1 {
+		fmt.Fprintf(os.Stderr, "Error: --max-concurrent must be at least 1.\n")
 		os.Exit(1)
 	}
 
@@ -86,12 +106,13 @@ Options:
 		untilDateStr,
 		count,
 		exitCodeMode,
+		maxConcurrent, // Pass new flag
 	)
 
 	if err := app.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	// app.Run() handles os.Exit() directly, so this line is theoretically unreachable.
-	// It's here for safety or if Run() were ever changed to return instead of exit.
+	// Note: app.Run() now explicitly exits via HandleExit, so this line should generally not be reached.
+	// It's here primarily for cases where Run() might return an internal error before HandleExit.
 }
