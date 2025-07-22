@@ -11,22 +11,18 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    # Crucial: Grant write permissions to the GITHUB_TOKEN for creating and uploading releases.
     permissions:
       contents: write
 
     steps:
-      # Step 1: Checkout the source code from the repository.
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Step 2: Set up the Go environment.
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
 
-      # Step 3: Get the Git tag/version information.
       - name: Get tag and version information
         id: get_version
         run: |
@@ -34,7 +30,29 @@ jobs:
           echo "VERSION=$(git describe --tags --always --dirty="-dev" --abbrev=7)" >> $GITHUB_ENV
         shell: bash
 
-      # Step 4: Build shcron for various operating systems and architectures (Cross-compilation).
+      - name: Extract Changelog Entry
+        id: get_changelog
+        run: |
+          # Remove 'v' prefix from the tag to match CHANGELOG.md format (e.g., v1.0.0 -> 1.0.0)
+          CHANGELOG_VERSION=$(echo "${{ env.RELEASE_TAG }}" | sed 's/^v//')
+          echo "Looking for changelog entry for version: ${CHANGELOG_VERSION}"
+
+          # Extract content between the current version header and the next version header
+          # or the end of the file.
+          # Explanation of awk command:
+          # /^## \[${CHANGELOG_VERSION}\]/ { flag=1; next } : When target header is found, set flag=1 and skip that line.
+          # /^## \[/ { flag=0 }                         : When any other '## [' header is found, unset flag=0.
+          # flag                                      : If flag is 1 (between target header and next), print the line.
+          CHANGELOG_BODY=$(awk "/^## \\[${CHANGELOG_VERSION}\\]/{flag=1;next}/^## \\[/{flag=0}flag" CHANGELOG.md)
+
+          # GitHub Actions multiline outputs need special handling.
+          # See: https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-output-parameter
+          DELIMITER=$(uuidgen) # Generate a unique delimiter
+          echo "CHANGELOG_BODY<<EOF_${DELIMITER}" >> $GITHUB_OUTPUT
+          echo "${CHANGELOG_BODY}" >> $GITHUB_OUTPUT
+          echo "EOF_${DELIMITER}" >> $GITHUB_OUTPUT
+        shell: bash
+
       - name: Build for Linux (amd64)
         run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${{ env.VERSION }}" -o shcron_linux_amd64 ./cmd/shcron
 
@@ -50,35 +68,27 @@ jobs:
       - name: Build for macOS (arm64 - Apple Silicon)
         run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -X main.version=${{ env.VERSION }}" -o shcron_darwin_arm64 ./cmd/shcron
 
-      # Step 5: Calculate SHA256 checksums for all executables directly.
       - name: Calculate Checksums
         run: |
           sha256sum shcron_linux_amd64 shcron_linux_arm64 shcron_windows_amd64.exe shcron_darwin_amd64 shcron_darwin_arm64 > SHA256SUMS
         shell: bash
 
-      # Step 6: Create GitHub Release and Upload Assets (Consolidated Step)
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: Release ${{ env.RELEASE_TAG }}
           body: |
-            ## shcron ${{ env.RELEASE_TAG }}
+            ## Release Notes for ${{ env.RELEASE_TAG }}
 
-            This is a new release of `shcron` with various improvements and bug fixes.
+            ${{ steps.get_changelog.outputs.CHANGELOG_BODY }}
 
-            ### Key Changes:
-            - Added support for cron patterns.
-            - Implemented flexible `--until` date parsing.
-            - Improved code organization and testability.
-            - Fixed file descriptor leak in long-running jobs.
-
+            ---
             ### Download Assets:
             Choose the appropriate executable for your operating system and architecture below.
             (No archiving, direct executables provided.)
           draft: false
           prerelease: false
-          # Define the executable files to upload as release assets.
           files: |
             shcron_linux_amd64
             shcron_linux_arm64
