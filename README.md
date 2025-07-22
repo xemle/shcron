@@ -44,8 +44,8 @@ To install `shcron` from source, you need to have Go (version 1.22 or higher) in
 Pre-built binaries for various operating systems and architectures are available in the [GitHub Releases](https://github.com/xemle/shcron/releases) page.
 
 1.  Go to the [latest release](https://github.com/xemle/shcron/releases/latest).
-2.  Download the appropriate `.zip` or `.tar.gz` file for your operating system and architecture.
-3.  Extract the archive.
+2.  Download the appropriate binary file for your operating system and architecture.
+3.  Rename your binary to `shchron`
 4.  Move the `shcron` (or `shcron.exe` on Windows) executable to a directory in your system's `PATH` (e.g., `/usr/local/bin` on Linux/macOS, or any directory included in `Path` environment variable on Windows).
 
 ## 💡 Usage
