@@ -1,0 +1,71 @@
+name: Build and Release shcron
+
+on:
+  push:
+    tags:
+      - 'v*.*.*' # Trigger on push to tags like v1.0.0, v1.0.1, etc.
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Get tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build for Linux (amd64)
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o shcron_linux_amd64 ./cmd/shcron
+      - name: Build for Linux (arm64)
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o shcron_linux_arm64 ./cmd/shcron
+      - name: Build for Windows (amd64)
+        run: |
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o shcron_windows_amd64.exe ./cmd/shcron
+      - name: Build for macOS (amd64)
+        run: |
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o shcron_darwin_amd64 ./cmd/shcron
+      - name: Build for macOS (arm64)
+        run: |
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o shcron_darwin_arm64 ./cmd/shcron
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            shcron_linux_amd64
+            shcron_linux_arm64
+            shcron_windows_amd64.exe
+            shcron_darwin_amd64
+            shcron_darwin_arm64
+          draft: false
+          prerelease: false
+          name: Release ${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## shcron ${{ steps.get_version.outputs.VERSION }}
+
+            A simple command-line tool for periodic execution of commands.
+
+            ### Features:
+            - Custom time patterns (e.g., "5s", "1m", "2h")
+            - Exit on first command failure
+            - Dump output to timestamped files
+            - Max run count or until a specific date/time
+            - Configurable exit codes
+
+            ### Usage:
+            ```bash
+            shcron "5s" echo "Hello every 5 seconds!"
+            shcron -c 3 "1m" ls -l
+            shcron -u "2025-07-23 10:00" "1h" df -h
+            ```
