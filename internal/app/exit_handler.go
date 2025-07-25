@@ -10,7 +10,7 @@ import (
 type RunMetrics struct {
 	mu sync.Mutex // Mutex to protect access to fields
 
-	TotalRuns     int // Total number of runs *scheduled*
+	totalRuns     int // Total number of runs *scheduled*
 	CompletedRuns int // Total number of runs *that have finished*
 
 	FirstScheduledRunExitCode int // Exit code of the first run that was *scheduled* and *completed*
@@ -24,6 +24,21 @@ type RunMetrics struct {
 // NewRunMetrics initializes a new RunMetrics struct.
 func NewRunMetrics() *RunMetrics {
 	return &RunMetrics{}
+}
+
+func (m *RunMetrics) IncRuns() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.totalRuns++
+	return m.totalRuns
+}
+
+func (m *RunMetrics) GetTotalRuns() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.totalRuns
 }
 
 // RecordCompletedRun updates metrics after a single command execution has finished.
@@ -55,11 +70,11 @@ func HandleExit(mode string, metrics *RunMetrics, finishedNormally bool) {
 
 	finalShcronExitCode := 0
 
-	if metrics.TotalRuns == 0 && !finishedNormally {
+	if metrics.totalRuns == 0 && !finishedNormally {
 		// If no runs were even scheduled and it's not a normal finish (e.g., immediate Ctrl+C)
 		os.Exit(0) // Exit cleanly
 	}
-	if metrics.CompletedRuns == 0 && metrics.TotalRuns > 0 && !finishedNormally {
+	if metrics.CompletedRuns == 0 && metrics.totalRuns > 0 && !finishedNormally {
 		// If runs were scheduled but none completed (e.g., immediate abort during long first run)
 		// We can't use metrics from completed runs, so exit cleanly unless specific error occurred.
 		os.Exit(0)

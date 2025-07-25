@@ -1,51 +1,27 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
+	"strings"
 
-	"github.com/xemle/shcron/internal/app"
+	"github.com/spf13/pflag"               // Using pflag for better CLI experience
+	"github.com/xemle/shcron/internal/app" // Make sure this import path is correct for your project
 )
 
-var (
-	exitOnFailure bool
-	outputDir     string
-	untilDateStr  string
-	count         int
-	exitCodeMode  string
-	maxConcurrent int // NEW: Flag for maximum concurrent executions
-)
-
-// version will be set by the Go linker during build for releases
 var version string = "dev"
 
 func main() {
-	// Define flags
-	flag.BoolVar(&exitOnFailure, "exit-on-failure", false, "Exit immediately if the command returns a non-zero exit code.")
-	flag.BoolVar(&exitOnFailure, "e", false, "Exit immediately if the command returns a non-zero exit code (shorthand).")
+	count := pflag.IntP("count", "c", 0, "Stop scheduling after N runs (0 for unlimited)")
+	exitCodeMode := pflag.StringP("exit-code-mode", "x", "last", "Mode for shcron's exit code: 'last', 'any-fail', 'all-fail'")
+	exitOnFailure := pflag.BoolP("exit-on-failure", "e", false, "Exit immediately if a command fails (returns non-zero exit code)")
+	maxConcurrent := pflag.IntP("max-concurrent", "j", 1, "Maximum number of concurrent command executions")
+	outputDir := pflag.StringP("output-dir", "o", "", "Directory to dump command stdout/stderr (e.g., '/var/log/shcron')")
+	untilDateStr := pflag.StringP("until", "u", "", "Stop scheduling at a specific date/time (e.g., '2025-12-31 23:59:59')")
+	versionFlag := pflag.Bool("version", false, "Print shcron version and exit.")
 
-	flag.StringVar(&outputDir, "output-dir", "", "Directory to dump command output (one file per run).")
-	flag.StringVar(&outputDir, "o", "", "Directory to dump command output (one file per run) (shorthand).")
-
-	flag.StringVar(&untilDateStr, "until", "", "Maximum date/time until the task should repeat (e.g., '2025-12-31', 'next day', 'in 3 hours').")
-	flag.StringVar(&untilDateStr, "u", "", "Maximum date/time until the task should repeat (shorthand).")
-
-	flag.IntVar(&count, "count", 0, "Maximum number of times the task should be repeated (0 for infinite).")
-	flag.IntVar(&count, "c", 0, "Maximum number of times the task should be repeated (0 for infinite) (shorthand).")
-
-	flag.StringVar(&exitCodeMode, "exit-code", "default", "Defines shcron's exit code on termination. Options: first-run, last-run, first-error, last-error, default.")
-	flag.StringVar(&exitCodeMode, "x", "default", "Defines shcron's exit code on termination (shorthand).")
-
-	flag.IntVar(&maxConcurrent, "max-concurrent", 1, "Maximum number of concurrent command executions. 1 for sequential.")
-	flag.IntVar(&maxConcurrent, "j", 1, "Maximum number of concurrent command executions (shorthand).")
-
-	// Special flag for version
-	versionFlag := flag.Bool("version", false, "Print shcron version and exit.")
-
-	// Set custom usage message
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), `shcron: A flexible command-line tool for periodic execution, similar to cron but for temporary tasks.
+	pflag.Usage = func() {
+		fmt.Fprintf(pflag.CommandLine.Output(), `shcron: A flexible command-line tool for periodic execution, similar to cron but for temporary tasks.
 It supports both simple interval patterns and full cron expressions for precise scheduling, and can run tasks in parallel.
 
 Usage: %s [options] "<pattern>" <command> [args...]
@@ -56,23 +32,24 @@ Pattern Examples:
     "1m"  : Every 1 minute
     "30m" : Every 30 minutes
     "2h"  : Every 2 hours
-    "1d"  : Every 1 day
 
-  Cron Expressions (5 fields: Minute Hour DayOfMonth Month DayOfWeek):
-    "* * * * *"   : Every minute
-    "0 * * * *"   : Every hour, at minute 0
-    "0 9 * * 1-5" : Every weekday (Mon-Fri) at 9:00 AM
-    "0 0 1 * *"   : On the 1st of every month at midnight
+  Cron Expressions (6 fields: Second Minute Hour DayOfMonth Month DayOfWeek):
+    "* * * * * *"   : Every second
+    "*/10 * * * * *": Every 10 seconds
+    "0 * * * * *"   : Every minute
+    "0 5 * * * *"   : Every hour, at minute 5
+    "0 0 9 * * 1-5" : Every weekday (Mon-Fri) at 9:00 AM
+    "0 0 0 1 * *"   : On the 1st of every month at midnight
 
 Date/Time Format for --until:
-  Uses flexible parsing: "YYYY-MM-DD", "YYYY-MM-DD HH:MM", "next day", "in 3 hours", etc.
+  Uses parsing: "YYYY-MM-DD", "YYYY-MM-DD HH:MM"
 
 Options:
 `, os.Args[0])
-		flag.PrintDefaults()
+		pflag.PrintDefaults()
 	}
 
-	flag.Parse() // Parse the flags
+	pflag.Parse()
 
 	if *versionFlag {
 		fmt.Printf("shcron version %s\n", version)
@@ -80,39 +57,48 @@ Options:
 	}
 
 	// Positional arguments start after flags
-	args := flag.Args()
+	args := pflag.Args()
 
 	if len(args) < 2 {
-		flag.Usage()
+		fmt.Println("Error: pattern and command are required.")
+		pflag.Usage()
 		os.Exit(1)
 	}
 
-	if maxConcurrent < 1 {
+	pattern := args[0]
+	command := args[1]
+	args = args[2:]
+
+	validExitCodeModes := map[string]bool{"last": true, "any-fail": true, "all-fail": true}
+	if !validExitCodeModes[strings.ToLower(*exitCodeMode)] {
+		fmt.Fprintf(os.Stderr, "Error: Invalid --exit-code-mode '%s'. Must be 'last', 'any-fail', or 'all-fail'.\n", *exitCodeMode)
+		os.Exit(1)
+	}
+
+	if *maxConcurrent < 1 {
 		fmt.Fprintf(os.Stderr, "Error: --max-concurrent must be at least 1.\n")
 		os.Exit(1)
 	}
 
-	patternStr := args[0]
-	command := args[1]
-	cmdArgs := args[2:]
-
-	// Create and run the ShcronApp
-	app := app.NewShcronApp(
-		patternStr,
+	appInstance, err := app.NewShcronApp(
+		pattern,
 		command,
-		cmdArgs,
-		exitOnFailure,
-		outputDir,
-		untilDateStr,
-		count,
-		exitCodeMode,
-		maxConcurrent, // Pass new flag
+		args,
+		*exitOnFailure,
+		*outputDir,
+		*untilDateStr,
+		*count,
+		*exitCodeMode,
+		*maxConcurrent,
 	)
 
-	if err := app.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "shcron: Failed to initiate cli: %v\n", err)
 		os.Exit(1)
 	}
-	// Note: app.Run() now explicitly exits via HandleExit, so this line should generally not be reached.
-	// It's here primarily for cases where Run() might return an internal error before HandleExit.
+
+	if err := appInstance.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "shcron: %v\n", err)
+		os.Exit(1)
+	}
 }

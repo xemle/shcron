@@ -10,7 +10,7 @@ It's designed for scenarios where you need to automate a task for a limited time
 
 * **Flexible Scheduling:**
     * **Interval Patterns:** Simple intervals like `"5s"`, `"1m"`, `"2h"`, `"1d"`.
-    * **Cron Expressions:** Full 5-field cron syntax (e.g., `"* * * * *"`, `"0 9 * * 1-5"`).
+    * **Cron Expressions:** Full 6-field cron syntax (e.g., `"* * * * * *"`, `"0 0 9 * * 1-5"`).
         * Utilizes a robust cron parser for precise, drift-free scheduling.
 * **Controlled Execution:**
     * **Maximum Runs (`-c, --count`):** Limit the total number of times the command executes.
@@ -46,10 +46,17 @@ Pre-built binaries for various operating systems and architectures are available
 1.  Go to the [latest release](https://github.com/xemle/shcron/releases/latest).
 2.  Download the appropriate binary file for your operating system and architecture.
 3.  Rename your binary to `shchron`
-4.  Move the `shcron` (or `shcron.exe` on Windows) executable to a directory in your system's `PATH` (e.g., `/usr/local/bin` on Linux/macOS, or any directory included in `Path` environment variable on Windows).
+4.  Add executable flag `chmod +x shchron`
+5.  Move the `shcron` (or `shcron.exe` on Windows) executable to a directory in your system's `PATH` (e.g., `/usr/local/bin` on Linux/macOS, or any directory included in `Path` environment variable on Windows).
 
 ## 💡 Usage
 
 ```bash
 shcron [options] "<pattern>" <command> [args...]
+```
+
+Use `--` to stop option parsing of `shchron` so that you can overlapping options of your `<command>` with `shcron`
+
+```bash
+shcron [options] "<pattern>" -- <command> [args...]
 ```
