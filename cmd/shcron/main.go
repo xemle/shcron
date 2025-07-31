@@ -19,6 +19,7 @@ func main() {
 	outputDir := pflag.StringP("output-dir", "o", "", "Directory to dump command stdout/stderr (e.g., '/var/log/shcron')")
 	untilDateStr := pflag.StringP("until", "u", "", "Stop scheduling at a specific date/time (e.g., '2025-12-31 23:59:59')")
 	versionFlag := pflag.Bool("version", false, "Print shcron version and exit.")
+	logFlag := pflag.StringP("log-level", "l", "info", "Set log level (debug, info, warn, error, silent)")
 
 	pflag.Usage = func() {
 		fmt.Fprintf(pflag.CommandLine.Output(), `shcron: A flexible command-line tool for periodic execution, similar to cron but for temporary tasks.
@@ -90,15 +91,16 @@ Options:
 		*count,
 		*exitCodeMode,
 		*maxConcurrent,
+		&app.SimpleLogger{Level: app.ToLogLevel(*logFlag, app.Info)},
 	)
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "shcron: Failed to initiate cli: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to initiate cli: %v\n", err)
 		os.Exit(1)
 	}
 
 	if err := appInstance.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "shcron: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 }

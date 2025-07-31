@@ -50,6 +50,7 @@ type ShcronApp struct {
 	commandExecutor CommandExecutor
 	fileManager     FileManager
 	clock           Clock
+	log             Logger
 }
 
 // NewShcronApp creates and initializes a new ShcronApp.
@@ -65,6 +66,8 @@ func NewShcronApp(
 	count int,
 	exitCodeMode string,
 	maxConcurrent int,
+
+	log Logger,
 ) (*ShcronApp, error) {
 	scheduler, err := schedule.CreateScheduler(pattern)
 	if err != nil {
@@ -78,9 +81,16 @@ func NewShcronApp(
 		if err != nil {
 			return nil, fmt.Errorf("invalid --until date '%s': %w", untilTime, err)
 		}
-		fmt.Printf("shcron: Will run until %s.\n", untilTime.Format(time.RFC3339))
+
+		optionalCount := ""
+		if count > 0 {
+			optionalCount = fmt.Sprintf(" or maximum count of %d is reached", count)
+		}
+		log.Info("Will run until %s%s\n", untilTime.Format(time.RFC3339), optionalCount)
+	} else if count > 0 {
+		log.Info("Will run until maximum count of %d is reached\n", count)
 	} else {
-		fmt.Printf("shcron: Will run forever until abort via CTRL+c.\n")
+		log.Info("Will run forever\n")
 	}
 
 	return NewShcronAppWithDependencies(
@@ -98,6 +108,7 @@ func NewShcronApp(
 		&OsCommandExecutor{},
 		&OsFileManager{},
 		&clock,
+		log,
 	)
 }
 
@@ -117,6 +128,7 @@ func NewShcronAppWithDependencies(
 	commandExecutor CommandExecutor,
 	fileManager FileManager,
 	clock Clock,
+	log Logger,
 ) (*ShcronApp, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -141,6 +153,7 @@ func NewShcronAppWithDependencies(
 		resultsChan: make(chan CommandRunResult, maxConcurrent),
 		ctx:         ctx,
 		cancel:      cancel,
+		log:         log,
 	}
 
 	err := app.initOptions()
@@ -159,7 +172,7 @@ func (s *ShcronApp) runCommand(
 ) {
 	defer s.wg.Done() // Decrement the waitgroup counter when this goroutine finishes.
 
-	fmt.Printf("shcron: Running #%d (%s): %s %s\n", runNum, timestamp.Format(time.RFC3339), s.Command, strings.Join(s.Args, " "))
+	s.log.Debug("Running #%d (%s): %s %s\n", runNum, timestamp.Format(time.RFC3339), s.Command, strings.Join(s.Args, " "))
 
 	cmdToRun := s.commandExecutor.CommandContext(s.ctx, s.Command, s.Args...)
 	var runErr error
@@ -176,7 +189,7 @@ func (s *ShcronApp) runCommand(
 		var err error
 		outputFile, err = s.fileManager.Create(outputFilePath) // Use injected method
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "shcron: Error creating output file %s for run #%d: %v\n", outputFilePath, runNum, err)
+			s.log.Warn("Error creating output file %s for run #%d: %v\n", outputFilePath, runNum, err)
 			// Fallback to os.Stdout/Stderr if file creation fails
 			cmdToRun.SetStdout(os.Stdout)
 			cmdToRun.SetStderr(os.Stderr)
@@ -193,7 +206,7 @@ func (s *ShcronApp) runCommand(
 
 	if outputFile != nil {
 		if err := outputFile.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "shcron: Error closing output file for run #%d: %v\n", runNum, err)
+			s.log.Warn("Error closing output file for run #%d: %v\n", runNum, err)
 		}
 	}
 
@@ -206,10 +219,10 @@ func (s *ShcronApp) runCommand(
 		} else if s.ctx.Err() != nil {
 			// If runErr is not an ExitError but context was cancelled, it means
 			// the command was likely killed/terminated by us.
-			fmt.Fprintf(os.Stderr, "shcron: Command #%d was terminated due to context cancellation.\n", runNum)
+			s.log.Warn("Command #%d was terminated due to context cancellation\n", runNum)
 			exitCode = 1
 		} else {
-			fmt.Fprintf(os.Stderr, "shcron: Error executing command for run #%d: %v\n", runNum, runErr)
+			s.log.Error("Error executing command for run #%d: %v\n", runNum, runErr)
 			exitCode = 127
 		}
 	}
@@ -223,7 +236,7 @@ func (s *ShcronApp) runCommand(
 	}:
 		// Sent successfully
 	case <-s.ctx.Done():
-		fmt.Printf("shcron: Discarding result for run #%d as context is cancelled.\n", runNum)
+		s.log.Warn("Discarding result for run #%d as context is cancelled\n", runNum)
 	}
 }
 
@@ -233,14 +246,14 @@ func (s *ShcronApp) Run() error {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM) // Capture Ctrl+C and termination signals
 
-	fmt.Printf("shcron: Press Ctrl+C to abort.\n")
+	s.log.Info("Press Ctrl+C to abort\n")
 
 	// Goroutine to handle results from completed commands
 	go func() {
 		for res := range s.resultsChan {
 			s.runMetrics.RecordCompletedRun(res)
 			if s.ExitOnFailure && res.ExitCode != 0 {
-				fmt.Fprintf(os.Stderr, "shcron: Command #%d exited with non-zero code: %d. Terminating due to --exit-on-failure.\n", res.RunNumber, res.ExitCode)
+				s.log.Info("Command #%d exited with non-zero code: %d. Terminating due to --exit-on-failure\n", res.RunNumber, res.ExitCode)
 				s.cancel() // THIS WILL TRIGGER THE MAIN LOOP'S CANCELLATION
 				return
 			}
@@ -256,7 +269,7 @@ Loop:
 		// Check for context cancellation from external signals, count limit, until date, or exit-on-failure
 		select {
 		case sig := <-sigChan:
-			fmt.Printf("\nshcron: Received signal %s. Initiating graceful shutdown.\n", sig)
+			s.log.Debug("Received signal %s. Initiating graceful shutdown\n", sig)
 			s.cancel() // Cancel the master context
 		case <-s.ctx.Done():
 			// Context was cancelled, so break out of the main loop.
@@ -276,13 +289,13 @@ Loop:
 
 		if s.Count > 0 && currentTotalRuns >= s.Count {
 			s.wg.Wait()
-			fmt.Printf("shcron: Maximum scheduled run count (%d) reached. Initiating shutdown.\n", s.Count)
+			s.log.Info("Maximum scheduled run count (%d) reached. Initiating shutdown...\n", s.Count)
 			s.cancel()
 			continue // Re-enter loop to hit `s.ctx.Done()`
 		}
 
 		if !s.untilTime.IsZero() && lastRunTime.After(s.untilTime) {
-			fmt.Printf("shcron: Until date (%s) reached. Initiating shutdown.\n", s.untilTime.Format(time.RFC3339))
+			s.log.Info("Until date (%s) reached. Initiating shutdown...\n", s.untilTime.Format(time.RFC3339))
 			s.cancel()
 			continue // Re-enter loop to hit `s.ctx.Done()`
 		}
@@ -290,15 +303,15 @@ Loop:
 		// Determine the next scheduled time
 		nextScheduledTime := lastRunTime
 		if currentTotalRuns == 0 && !s.Scheduler.IsCron() {
-			fmt.Printf("shcron: Launching first run immediately (interval mode).\n")
+			s.log.Debug("Launching first run immediately (interval mode)\n")
 		} else {
 			nextScheduledTime = s.Scheduler.Next(lastRunTime)
 			if nextScheduledTime.IsZero() {
-				fmt.Fprintf(os.Stderr, "shcron: Scheduler did not produce a future time. Exiting.\n")
+				s.log.Error("Scheduler did not produce a future time. Exiting...\n")
 				s.cancel() // No more runs possible, cancel to exit
 				continue   // Re-enter loop to hit `s.ctx.Done()`
 			}
-			fmt.Printf("shcron: Next run scheduled for %s (sleep for %s)\n", nextScheduledTime.Format(time.RFC3339), nextScheduledTime.Sub(lastRunTime).Round(time.Second))
+			s.log.Debug("Next run scheduled for %s (sleep for %s)\n", nextScheduledTime.Format(time.RFC3339), nextScheduledTime.Sub(lastRunTime).Round(time.Second))
 		}
 
 		// Calculate sleep duration until next scheduled time
@@ -314,7 +327,7 @@ Loop:
 			case <-s.clock.After(sleepDuration):
 				// Time for next run. Continue to acquire semaphore and launch.
 			case sig := <-sigChan:
-				fmt.Printf("\nshcron: Received signal %s. Initiating graceful shutdown.\n", sig)
+				s.log.Info("Received signal %s. Initiating graceful shutdown...\n", sig)
 				s.cancel()
 				continue // Re-enter loop to hit `s.ctx.Done()`
 			case <-s.ctx.Done():
@@ -333,11 +346,11 @@ Loop:
 		case s.sem <- struct{}{}:
 			// Slot acquired, proceed to launch
 		case sig := <-sigChan: // Check for signals again while waiting for semaphore
-			fmt.Printf("\nshcron: Received signal %s. Initiating graceful shutdown.\n", sig)
+			s.log.Info("Received signal %s. Initiating graceful shutdown...\n", sig)
 			s.cancel()
 			continue // Re-enter loop to hit `s.ctx.Done()`
 		case <-s.ctx.Done(): // Check for context cancellation again
-			fmt.Println("shcron: Not scheduling new task as termination signal received while waiting for slot.")
+			s.log.Info("Not scheduling new task as termination signal received while waiting for slot...")
 			continue // Re-enter loop to hit `s.ctx.Done()`
 		}
 
@@ -358,7 +371,7 @@ Loop:
 	}
 
 	// --- Cleanup after main loop exits ---
-	fmt.Println("shcron: Waiting for active tasks to finish...")
+	s.log.Debug("Waiting for active tasks to finish...")
 	s.wg.Wait()          // Wait for all command goroutines to finish
 	close(s.resultsChan) // Close the results channel after all producers (runCommand) are done
 
@@ -368,14 +381,11 @@ Loop:
 }
 
 func (s *ShcronApp) initOptions() error {
-	if s.Count > 0 {
-		fmt.Printf("shcron: Will run a maximum of %d times.\n", s.Count)
-	}
 	if s.ExitOnFailure {
-		fmt.Println("shcron: Exiting on first command failure.")
+		s.log.Debug("Exiting on first command failure\n")
 	}
 	if s.OutputDir != "" {
-		fmt.Printf("shcron: Dumping output to '%s'\n", s.OutputDir)
+		s.log.Debug("Dumping output to '%s'\n", s.OutputDir)
 		// Check if the directory exists
 		_, statErr := s.fileManager.Stat(s.OutputDir) // Call Stat once and capture the error
 
@@ -394,9 +404,9 @@ func (s *ShcronApp) initOptions() error {
 		// If statErr is nil, the directory already exists and is accessible, so no action needed.
 	}
 	if s.MaxConcurrent > 1 {
-		fmt.Printf("shcron: Allowing up to %d concurrent command executions.\n", s.MaxConcurrent)
+		s.log.Debug("Allowing up to %d concurrent command executions\n", s.MaxConcurrent)
 	} else {
-		fmt.Println("shcron: Running commands sequentially.")
+		s.log.Debug("Running commands sequentially\n")
 	}
 	return nil
 }
