@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"syscall"
 	"time"
 )
 
@@ -24,21 +23,7 @@ type CommandRunner interface {
 	Run() error
 	SetStdout(w io.Writer)
 	SetStderr(w io.Writer)
-	SetSysProcAttr(attr *syscall.SysProcAttr)
 	SetEnv(env []string)
-}
-
-// DefaultCommandExecutor implements CommandExecutor using os/exec.
-type DefaultCommandExecutor struct{}
-
-// CommandContext creates a new *exec.Cmd.
-func (d *DefaultCommandExecutor) CommandContext(ctx context.Context, name string, arg ...string) CommandRunner {
-	return &DefaultCommandRunner{Cmd: exec.CommandContext(ctx, name, arg...)}
-}
-
-// GetEnviron returns a copy of the current environment.
-func (d *DefaultCommandExecutor) GetEnviron() []string {
-	return os.Environ()
 }
 
 // DefaultCommandRunner wraps an *exec.Cmd to implement CommandRunner.
@@ -58,10 +43,6 @@ func (d *DefaultCommandRunner) SetStderr(w io.Writer) {
 	d.Cmd.Stderr = w
 }
 
-func (d *DefaultCommandRunner) SetSysProcAttr(attr *syscall.SysProcAttr) {
-	d.Cmd.SysProcAttr = attr
-}
-
 func (d *DefaultCommandRunner) SetEnv(env []string) {
 	d.Cmd.Env = env
 }
@@ -76,21 +57,21 @@ type FileManager interface {
 	MkdirAll(path string, perm os.FileMode) error
 }
 
-// DefaultFileManager implements FileManager using os package functions.
-type DefaultFileManager struct{}
+// OsFileManager implements FileManager using os package functions.
+type OsFileManager struct{}
 
 // Create creates or truncates the named file.
-func (d *DefaultFileManager) Create(name string) (io.WriteCloser, error) {
+func (d *OsFileManager) Create(name string) (io.WriteCloser, error) {
 	return os.Create(name)
 }
 
 // Stat returns a FileInfo describing the named file.
-func (d *DefaultFileManager) Stat(name string) (os.FileInfo, error) {
+func (d *OsFileManager) Stat(name string) (os.FileInfo, error) {
 	return os.Stat(name)
 }
 
 // MkdirAll creates a directory named path, along with any necessary parents.
-func (d *DefaultFileManager) MkdirAll(path string, perm os.FileMode) error {
+func (d *OsFileManager) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(path, perm)
 }
 
@@ -103,16 +84,16 @@ type Clock interface {
 	After(d time.Duration) <-chan time.Time
 }
 
-// DefaultClock implements Clock using time package functions.
-type DefaultClock struct{}
+// SystemClock implements Clock using time package functions.
+type SystemClock struct{}
 
 // Now returns the current local time.
-func (d *DefaultClock) Now() time.Time {
+func (d *SystemClock) Now() time.Time {
 	return time.Now()
 }
 
 // After waits for the duration to elapse and then sends the current time
 // on the returned channel.
-func (d *DefaultClock) After(duration time.Duration) <-chan time.Time {
+func (d *SystemClock) After(duration time.Duration) <-chan time.Time {
 	return time.After(duration)
 }

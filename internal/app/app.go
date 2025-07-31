@@ -71,7 +71,7 @@ func NewShcronApp(
 		return nil, err
 	}
 
-	clock := DefaultClock{}
+	clock := SystemClock{}
 	untilTime := time.Time{}
 	if untilDateStr != "" {
 		untilTime, err = schedule.ParseUntilDate(untilDateStr, clock.Now())
@@ -95,8 +95,8 @@ func NewShcronApp(
 
 		scheduler,
 		untilTime,
-		&DefaultCommandExecutor{},
-		&DefaultFileManager{},
+		&OsCommandExecutor{},
+		&OsFileManager{},
 		&clock,
 	)
 }
@@ -164,9 +164,6 @@ func (s *ShcronApp) runCommand(
 	cmdToRun := s.commandExecutor.CommandContext(s.ctx, s.Command, s.Args...)
 	var runErr error
 	var outputFile io.WriteCloser // Use io.WriteCloser for the file interface
-
-	// Set process group ID to allow sending signals to child processes
-	cmdToRun.SetSysProcAttr(&syscall.SysProcAttr{Setpgid: true})
 
 	// Set SHCRON_RUN_ID environment variable for the command
 	env := s.commandExecutor.GetEnviron() // Use injected method
